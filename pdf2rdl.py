@@ -3,6 +3,24 @@
 import pdfplumber
 
 
+def dump_row(row):
+    CELL_W = 20
+    print(','.join([
+        c[:CELL_W].ljust(CELL_W)
+        if c is not None
+        else 'N/A'.ljust(CELL_W)
+        for c in row
+    ]))
+
+
+def rm_lf(row, cells):
+    tmp = [c or '' for c in row]
+    return [
+        h.replace('\n', '') if en else h
+        for h, en in zip(tmp, cells)
+    ]
+
+
 class PdfTable():
     def __init__(self, title, data):
         self.title = title
@@ -37,16 +55,34 @@ class RegisterMap():
         return True
 
     def __init__(self):
-        self.data = []
+        self.raw_data = []
         self.title = []
         self.registers = []
 
     def append_regmap(self, tbl: PdfTable):
+        self.hdr = tbl.hdr
         self.title.append(tbl.title)
-        self.data.append(tbl.data)
+        self.raw_data += tbl.data
 
     def append_regdef(self, tbl: PdfTable):
         self.registers.append(tbl)
+
+    def sanitize(self):
+        self.data = [
+            rm_lf(row, (0, 1, 0))
+            for row in self.raw_data
+        ]
+
+    def dump(self):
+        print('Title(s):')
+        for t in self.title:
+            print(t)
+        print('Entries:')
+        dump_row(self.hdr)
+        print('-'*40)
+        for row in self.data:
+            dump_row(row)
+        print('-'*40)
 
 
 pdf = pdfplumber.open("/home/patrick/Downloads/pg125-axi-traffic-gen.pdf")
@@ -105,3 +141,6 @@ for tab in tables:
         print()
     print('-'*40)
     '''
+
+regmap.sanitize()
+regmap.dump()
