@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import pdfplumber
+import re
 
 
 def dump_row(row):
@@ -35,6 +36,7 @@ class PdfTable():
 
 
 class RegisterDefinition():
+
     @staticmethod
     def is_valid(tbl: PdfTable):
         if len(tbl.hdr) != 5:
@@ -43,8 +45,28 @@ class RegisterDefinition():
             return False
         return True
 
+    @staticmethod
+    def title_addr(tbl: PdfTable):
+        RE_HDR_ADDR_MATCH = re.compile(r'.+\((0x[0-9a-fA-F]+)\)$')
+        addr_match = re.match(RE_HDR_ADDR_MATCH, tbl.title)
+        if not addr_match:
+            return None
+        return int(addr_match.group(1), 0)
+
+    def title_addr_range(tbl: PdfTable):
+        RE_HDR_ADDR_RNG_MATCH = re.compile(
+            r'.+\((0x[0-9a-fA-F]+)\sto\s(0x[0-9a-fA-F]+)\)$')
+        addr_match = re.match(RE_HDR_ADDR_RNG_MATCH, tbl.title)
+        if not addr_match:
+            return None
+        return int(addr_match.group(1), 0), int(addr_match.group(2), 0)
+
     def __init__(self, tbl: PdfTable):
-        self.tab = tbl
+        self.data = tbl.data
+
+    def dump(self):
+        for row in self.data:
+            dump_row(rm_lf(row, (1, 1, 1, 1, 1)))
 
 
 class RegisterMap():
@@ -57,21 +79,24 @@ class RegisterMap():
     def __init__(self):
         self.raw_data = []
         self.title = []
-        self.registers = []
+        self.registers = {}
 
     def append_regmap(self, tbl: PdfTable):
         self.hdr = tbl.hdr
         self.title.append(tbl.title)
         self.raw_data += tbl.data
 
-    def append_regdef(self, tbl: PdfTable):
-        self.registers.append(tbl)
+    def append_regdef(self, regaddr: int, regdef: RegisterDefinition):
+        self.registers[regaddr] = regdef
 
     def sanitize(self):
         self.data = [
             rm_lf(row, (0, 1, 0))
             for row in self.raw_data
         ]
+
+    RE_ADDR_MATCH = re.compile(r'(0x[0-9a-fA-F]+)$')
+    RE_ADDR_RNG_MATCH = re.compile(r'(0x[0-9a-fA-F]+)\sto\s(0x[0-9a-fA-F]+)$')
 
     def dump(self):
         print('Title(s):')
@@ -82,7 +107,26 @@ class RegisterMap():
         print('-'*40)
         for row in self.data:
             dump_row(row)
-        print('-'*40)
+            offs = row[0]
+            addr_match = re.match(self.RE_ADDR_MATCH, offs)
+            if addr_match:
+                offs = (addr_match.group(1), addr_match.group(1))
+            else:
+                addr_match = re.match(self.RE_ADDR_RNG_MATCH, offs)
+                if addr_match:
+                    offs = addr_match.group(1), addr_match.group(2)
+                else:
+                    raise RuntimeError(
+                        f'couldn\'t determine address from f{offs}')
+
+            offs = [int(o, 0) for o in offs]
+            for offs in range(offs[0], offs[0]+1, 4):
+                if offs not in self.registers:
+                    print(f'offset 0x{offs:02x} not in register map')
+                    continue
+                print('-'*40)
+                self.registers[offs].dump()
+                print('-'*40)
 
 
 pdf = pdfplumber.open("/home/patrick/Downloads/pg125-axi-traffic-gen.pdf")
@@ -126,7 +170,15 @@ for tab in tables:
         regmap.append_regmap(tab)
     elif RegisterDefinition.is_valid(tab):
         print(f'Adding regdesc: {tab.title}')
-        regmap.append_regdef(tab)
+        regaddr = RegisterDefinition.title_addr(tab)
+        if regaddr is not None:
+            regdef = RegisterDefinition(tab)
+            regmap.append_regdef(regaddr, regdef)
+        else:
+            regaddr_range = RegisterDefinition.title_addr_range(tab)
+            if regaddr_range is not None:
+                for addr in range(regaddr_range[0], regaddr_range[1] + 1, 4):
+                    regmap.append_regdef(addr, regdef)
     else:
         print(f'Table not associated with register description: {tab.title}')
     '''
