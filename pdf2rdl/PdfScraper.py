@@ -25,7 +25,7 @@ def rm_lf(row, cells):
 class PdfTable():
     def __init__(self, title, data):
         self.title = title
-        self.hdr = [h.replace('\n', '') for h in data[0]]
+        self.hdr = [h.replace('\n', '') if h else '' for h in data[0]]
         self.data = data[1:]
 
     def append(self, title, data):
@@ -129,70 +129,77 @@ class RegisterMap():
                 print('-'*40)
 
 
-pdf = pdfplumber.open("/home/patrick/Downloads/pg125-axi-traffic-gen.pdf")
-pg = pdf.pages[37:50]
+class PdfScraper():
+    def __init__(self, fname: str, pages: list[int] = None):
+        self.pdf = pdfplumber.open(fname)
+        if pages is None:
+            self.pages = self.pdf.pages
+        else:
+            self.pages = [self.pdf.pages[p] for p in pages]
 
-curr_table = None
-tables: list[PdfTable] = []
+    def scrape(self):
+        curr_table: PdfTable = None
+        tables: list[PdfTable] = []
 
-for p in pg:
-    w, h, mr = p.width, p.height, 0.08
-    cr = p.crop((w * mr*1.4, h * mr, w * (1-mr), h * (1-mr)))
+        for p in self.pages:
+            w, h, mr = p.width, p.height, 0.08
+            cr = p.crop((w * mr*1.4, h * mr, w * (1-mr), h * (1-mr)))
 
-    tbset = {
-        'snap_x_tolerance': 5,
-        'snap_y_tolerance': 5,
-    }
-    tbs = cr.find_tables(table_settings=tbset)
+            tbset = {
+                'snap_x_tolerance': 5,
+                'snap_y_tolerance': 5,
+            }
+            tbs = cr.find_tables(table_settings=tbset)
 
-    for tb in tbs:
-        tb_data = tb.extract()
-        # Get the coordinates of the table
-        left, top, right, bottom = tb.bbox
-        title_crop = cr.within_bbox((left, top-22, right, top))
-        tb_title = title_crop.extract_text()
+            for tb in tbs:
+                tb_data = tb.extract()
+                # Get the coordinates of the table
+                left, top, right, bottom = tb.bbox
+                title_crop = cr.within_bbox((left, top-22, right, top))
+                tb_title = title_crop.extract_text()
+
+                if curr_table is not None:
+                    if curr_table.append(tb_title, tb_data):
+                        continue
+                    tables.append(curr_table)
+
+                curr_table = PdfTable(tb_title.strip(), tb_data)
 
         if curr_table is not None:
-            if curr_table.append(tb_title, tb_data):
-                continue
             tables.append(curr_table)
 
-        curr_table = PdfTable(tb_title.strip(), tb_data)
+        regmap = RegisterMap()
 
-if curr_table is not None:
-    tables.append(curr_table)
-
-regmap = RegisterMap()
-
-for tab in tables:
-    if RegisterMap.is_valid(tab):
-        print(f'Adding to regmap: {tab.title}')
-        regmap.append_regmap(tab)
-    elif RegisterDefinition.is_valid(tab):
-        print(f'Adding regdesc: {tab.title}')
-        regaddr = RegisterDefinition.title_addr(tab)
-        if regaddr is not None:
-            regdef = RegisterDefinition(tab)
-            regmap.append_regdef(regaddr, regdef)
-        else:
-            regaddr_range = RegisterDefinition.title_addr_range(tab)
-            if regaddr_range is not None:
-                for addr in range(regaddr_range[0], regaddr_range[1] + 1, 4):
-                    regmap.append_regdef(addr, regdef)
-    else:
-        print(f'Table not associated with register description: {tab.title}')
-    '''
-    print(tab.title)
-    for row in [tab.hdr] + tab.data:
-        for col in row:
-            if col is not None:
-                s = col[:10].ljust(10)
+        for tab in tables:
+            if RegisterMap.is_valid(tab):
+                print(f'Adding to regmap: {tab.title}')
+                regmap.append_regmap(tab)
+            elif RegisterDefinition.is_valid(tab):
+                print(f'Adding regdesc: {tab.title}')
+                regaddr = RegisterDefinition.title_addr(tab)
+                if regaddr is not None:
+                    regdef = RegisterDefinition(tab)
+                    regmap.append_regdef(regaddr, regdef)
+                else:
+                    regaddr_range = RegisterDefinition.title_addr_range(tab)
+                    if regaddr_range is not None:
+                        for addr in range(regaddr_range[0], regaddr_range[1] + 1, 4):
+                            regmap.append_regdef(addr, regdef)
             else:
-                s = 'N/A'
-            print(s + ', ', end='')
-        print()
-    print('-'*40)
-    '''
+                print(
+                    f'Table not associated with register description: {tab.title}')
+            '''
+            print(tab.title)
+            for row in [tab.hdr] + tab.data:
+                for col in row:
+                    if col is not None:
+                        s = col[:10].ljust(10)
+                    else:
+                        s = 'N/A'
+                    print(s + ', ', end='')
+                print()
+            print('-'*40)
+            '''
 
-regmap.sanitize()
-regmap.dump()
+        regmap.sanitize()
+        regmap.dump()
