@@ -74,7 +74,7 @@ class RegisterDefinition():
 class RegisterMap():
     @staticmethod
     def is_valid(tbl: PdfTable) -> bool:
-        if not tbl.title.endswith('Register Map'):
+        if not tbl.title.endswith('Register Map') and not tbl.title.endswith('Register Address Map'):
             return False
         return True
 
@@ -97,8 +97,10 @@ class RegisterMap():
             for row in self.raw_data
         ]
 
-    RE_ADDR_MATCH = re.compile(r'(0x[0-9a-fA-F]+)$')
-    RE_ADDR_RNG_MATCH = re.compile(r'(0x[0-9a-fA-F]+)\sto\s(0x[0-9a-fA-F]+)$')
+    RE_HEX_VALUE = r'((?<=0x)([0-9a-fA-F]+)|([0-9a-fA-F]+)(?=h))'
+    RE_ADDR_MATCH = re.compile(f'{RE_HEX_VALUE}')
+    RE_ADDR_RNG_MATCH = re.compile(
+        f'{RE_HEX_VALUE}\s(to|–)\s{RE_HEX_VALUE}')
 
     def dump(self) -> None:
         print('Title(s):')
@@ -119,9 +121,9 @@ class RegisterMap():
                     offs_fields = addr_match.group(1), addr_match.group(2)
                 else:
                     raise RuntimeError(
-                        f'couldn\'t determine address from f{offs_str}')
+                        f'couldn\'t determine address from {offs_str}')
 
-            offs_rng = [int(o, 0) for o in offs_fields]
+            offs_rng = [int(o, 16) for o in offs_fields]
             for offs in range(offs_rng[0], offs_rng[0]+1, 4):
                 if offs not in self.registers:
                     print(f'offset 0x{offs:02x} not in register map')
@@ -145,12 +147,18 @@ class PdfScraper():
 
         for p in self.pages:
             w, h, mr = p.width, p.height, 0.08
-            cr = p.crop((w * mr*1.4, h * mr, w * (1-mr), h * (1-mr)))
+            cr = p.crop((w * mr, h * mr, w * (1-mr), h * (1-mr)))
 
             tbset = {
                 'snap_x_tolerance': 5,
                 'snap_y_tolerance': 5,
             }
+
+            # debug tablefinder
+            # im = cr.to_image(resolution=150)
+            # im.reset().debug_tablefinder(tbset)
+            # im.save(f'tmp/out{p.page_number}.png', format='PNG')
+
             tbs = cr.find_tables(table_settings=tbset)
 
             for tb in tbs:
