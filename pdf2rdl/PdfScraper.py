@@ -97,10 +97,8 @@ class RegisterMap():
             for row in self.raw_data
         ]
 
-    RE_HEX_VALUE = r'((?<=0x)([0-9a-fA-F]+)|([0-9a-fA-F]+)(?=h))'
-    RE_ADDR_MATCH = re.compile(f'{RE_HEX_VALUE}')
-    RE_ADDR_RNG_MATCH = re.compile(
-        f'{RE_HEX_VALUE}\s(to|–)\s{RE_HEX_VALUE}')
+    RE_HEX_VALUE_0x = r'0x([0-9a-fA-F]+)'
+    RE_HEX_VALUE_0h = r'([0-9a-fA-F]+)h'
 
     def dump(self) -> None:
         print('Title(s):')
@@ -109,22 +107,31 @@ class RegisterMap():
         print('Entries:')
         dump_row(self.hdr)
         print('-'*40)
+        re_addr_match = None
+        re_addr_rng_match = None
         for row in self.data:
             dump_row(row)
             offs_str = row[0]
-            addr_match = re.match(self.RE_ADDR_MATCH, offs_str)
+            if not re_addr_match:
+                re_hex_val = self.RE_HEX_VALUE_0x if offs_str.startswith(
+                    '0x') else self.RE_HEX_VALUE_0h
+                re_addr_match = re.compile(f'^{re_hex_val}(\s+\(\d+\))?$')
+                re_addr_rng_match = re.compile(
+                    f'^{re_hex_val}\s+[-–]\s+{re_hex_val}(\s+\(\d+\))?$')
+
+            addr_match = re.match(re_addr_match, offs_str)
             if addr_match:
                 offs_fields = (addr_match.group(1), addr_match.group(1))
             else:
-                addr_match = re.match(self.RE_ADDR_RNG_MATCH, offs_str)
+                addr_match = re.match(re_addr_rng_match, offs_str)
                 if addr_match:
-                    offs_fields = addr_match.group(1), addr_match.group(2)
+                    offs_fields = (addr_match.group(1), addr_match.group(2))
                 else:
                     raise RuntimeError(
                         f'couldn\'t determine address from {offs_str}')
 
             offs_rng = [int(o, 16) for o in offs_fields]
-            for offs in range(offs_rng[0], offs_rng[0]+1, 4):
+            for offs in range(offs_rng[0], offs_rng[1]+1, 4):
                 if offs not in self.registers:
                     print(f'offset 0x{offs:02x} not in register map')
                     continue
