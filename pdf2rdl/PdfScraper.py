@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 
-import pdfplumber
 import re
+from typing import Optional, Tuple
+import pdfplumber
 
 
-def dump_row(row):
+def dump_row(row: list[str]) -> None:
     CELL_W = 20
     print(','.join([
         c[:CELL_W].ljust(CELL_W)
@@ -14,7 +15,7 @@ def dump_row(row):
     ]))
 
 
-def rm_lf(row, cells):
+def rm_lf(row: list[Optional[str]], cells: Tuple[bool, ...]) -> list[str]:
     tmp = [c or '' for c in row]
     return [
         h.replace('\n', '') if en else h
@@ -23,12 +24,12 @@ def rm_lf(row, cells):
 
 
 class PdfTable():
-    def __init__(self, title, data):
+    def __init__(self, title: str, data: list[list[Optional[str]]]):
         self.title = title
         self.hdr = [h.replace('\n', '') if h else '' for h in data[0]]
         self.data = data[1:]
 
-    def append(self, title, data):
+    def append(self, title: str, data: list[list[Optional[str]]]) -> bool:
         if not title.startswith(self.title):
             return False
         self.data += data[1:]
@@ -38,7 +39,7 @@ class PdfTable():
 class RegisterDefinition():
 
     @staticmethod
-    def is_valid(tbl: PdfTable):
+    def is_valid(tbl: PdfTable) -> bool:
         if len(tbl.hdr) != 5:
             return False
         if tbl.hdr != ['Bits', 'Name', 'Reset Value', 'Access Type', 'Description']:
@@ -46,14 +47,15 @@ class RegisterDefinition():
         return True
 
     @staticmethod
-    def title_addr(tbl: PdfTable):
+    def title_addr(tbl: PdfTable) -> Optional[int]:
         RE_HDR_ADDR_MATCH = re.compile(r'.+\((0x[0-9a-fA-F]+)\)$')
         addr_match = re.match(RE_HDR_ADDR_MATCH, tbl.title)
         if not addr_match:
             return None
         return int(addr_match.group(1), 0)
 
-    def title_addr_range(tbl: PdfTable):
+    @staticmethod
+    def title_addr_range(tbl: PdfTable) -> Optional[Tuple[int, int]]:
         RE_HDR_ADDR_RNG_MATCH = re.compile(
             r'.+\((0x[0-9a-fA-F]+)\sto\s(0x[0-9a-fA-F]+)\)$')
         addr_match = re.match(RE_HDR_ADDR_RNG_MATCH, tbl.title)
@@ -64,41 +66,41 @@ class RegisterDefinition():
     def __init__(self, tbl: PdfTable):
         self.data = tbl.data
 
-    def dump(self):
+    def dump(self) -> None:
         for row in self.data:
-            dump_row(rm_lf(row, (1, 1, 1, 1, 1)))
+            dump_row(rm_lf(row, (True, ) * len(row)))
 
 
 class RegisterMap():
     @staticmethod
-    def is_valid(tbl: PdfTable):
+    def is_valid(tbl: PdfTable) -> bool:
         if not tbl.title.endswith('Register Map'):
             return False
         return True
 
-    def __init__(self):
-        self.raw_data = []
-        self.title = []
-        self.registers = {}
+    def __init__(self) -> None:
+        self.raw_data: list[list[Optional[str]]] = []
+        self.title: list[str] = []
+        self.registers: dict[int, RegisterDefinition] = {}
 
-    def append_regmap(self, tbl: PdfTable):
+    def append_regmap(self, tbl: PdfTable) -> None:
         self.hdr = tbl.hdr
         self.title.append(tbl.title)
         self.raw_data += tbl.data
 
-    def append_regdef(self, regaddr: int, regdef: RegisterDefinition):
+    def append_regdef(self, regaddr: int, regdef: RegisterDefinition) -> None:
         self.registers[regaddr] = regdef
 
-    def sanitize(self):
+    def sanitize(self) -> None:
         self.data = [
-            rm_lf(row, (0, 1, 0))
+            rm_lf(row, (False, True, False))
             for row in self.raw_data
         ]
 
     RE_ADDR_MATCH = re.compile(r'(0x[0-9a-fA-F]+)$')
     RE_ADDR_RNG_MATCH = re.compile(r'(0x[0-9a-fA-F]+)\sto\s(0x[0-9a-fA-F]+)$')
 
-    def dump(self):
+    def dump(self) -> None:
         print('Title(s):')
         for t in self.title:
             print(t)
@@ -107,20 +109,20 @@ class RegisterMap():
         print('-'*40)
         for row in self.data:
             dump_row(row)
-            offs = row[0]
-            addr_match = re.match(self.RE_ADDR_MATCH, offs)
+            offs_str = row[0]
+            addr_match = re.match(self.RE_ADDR_MATCH, offs_str)
             if addr_match:
-                offs = (addr_match.group(1), addr_match.group(1))
+                offs_fields = (addr_match.group(1), addr_match.group(1))
             else:
-                addr_match = re.match(self.RE_ADDR_RNG_MATCH, offs)
+                addr_match = re.match(self.RE_ADDR_RNG_MATCH, offs_str)
                 if addr_match:
-                    offs = addr_match.group(1), addr_match.group(2)
+                    offs_fields = addr_match.group(1), addr_match.group(2)
                 else:
                     raise RuntimeError(
-                        f'couldn\'t determine address from f{offs}')
+                        f'couldn\'t determine address from f{offs_str}')
 
-            offs = [int(o, 0) for o in offs]
-            for offs in range(offs[0], offs[0]+1, 4):
+            offs_rng = [int(o, 0) for o in offs_fields]
+            for offs in range(offs_rng[0], offs_rng[0]+1, 4):
                 if offs not in self.registers:
                     print(f'offset 0x{offs:02x} not in register map')
                     continue
@@ -130,15 +132,15 @@ class RegisterMap():
 
 
 class PdfScraper():
-    def __init__(self, fname: str, pages: list[int] = None):
+    def __init__(self, fname: str, pages: Optional[list[int]] = None):
         self.pdf = pdfplumber.open(fname)
         if pages is None:
             self.pages = self.pdf.pages
         else:
             self.pages = [self.pdf.pages[p] for p in pages]
 
-    def scrape(self):
-        curr_table: PdfTable = None
+    def scrape(self) -> None:
+        curr_table: Optional[PdfTable] = None
         tables: list[PdfTable] = []
 
         for p in self.pages:
@@ -154,9 +156,12 @@ class PdfScraper():
             for tb in tbs:
                 tb_data = tb.extract()
                 # Get the coordinates of the table
-                left, top, right, bottom = tb.bbox
-                title_crop = cr.within_bbox((left, top-22, right, top))
-                tb_title = title_crop.extract_text()
+                left, top, right, _ = tb.bbox
+                try:
+                    title_crop = cr.within_bbox((left, top-22, right, top))
+                    tb_title = title_crop.extract_text()
+                except ValueError:
+                    continue
 
                 if curr_table is not None:
                     if curr_table.append(tb_title, tb_data):
